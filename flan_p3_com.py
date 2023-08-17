@@ -38,62 +38,114 @@ def find_best_match(src_point, F, img1, img2, window_size=5):
     
     return best_point
 
-def three_dimensional_reconstruction(camera_matrix1, camera_matrix2, p1, p2):
-    A = np.zeros((4, 4))
+
+def caliCameraAnd3DRecon(x, y, xp, yp):
+    # 2D image points
+    image_points = np.array([
+        [252, 380],
+        [84, 352],
+        [92, 202],
+        [259, 190],
+        [407, 356],
+        [294, 379],
+        [300, 195],
+        [411, 219]
+    ], dtype=np.float32)
+
+    # 3D object points
+    object_points = np.array([
+        [0, 1.5, 3.8],
+        [0, 22.5, 3.8],
+        [0, 22.5, 18.8],
+        [0, 1.5, 18.8],
+        [24.3, 0, 3.8],
+        [3.3, 0, 3.8],
+        [3.3, 0, 18.8],
+        [24.3, 0, 18.8]
+    ], dtype=np.float32)
+
+    image_points2 = np.array([
+        [258, 405],
+        [105, 364],
+        [114, 198],
+        [268, 178],
+        [474, 376],
+        [313, 403],
+        [322, 183],
+        [480, 213]
+    ], dtype=np.float32)
+    image = cv2.imread("im1.jpeg")
+    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Create initial camera matrix
+    camera_matrix = np.array([[500, 0, gray_image.shape[1] / 2],
+                                    [0, 500, gray_image.shape[0] / 2],
+                                    [0, 0, 1]], dtype=np.float32)
     
-    A[0] = p1[0] * camera_matrix1[2] - camera_matrix1[0]
-    A[1] = p1[1] * camera_matrix1[2] - camera_matrix1[1]
-    A[2] = p2[0] * camera_matrix2[2] - camera_matrix2[0]
-    A[3] = p2[1] * camera_matrix2[2] - camera_matrix2[1]
+    # Distortion coefficients (assuming no distortion)
+    distortion_coeffs = np.zeros((5, 1), dtype=np.float32)
+
+    # Calibrate camera
+    ret1, mtx1, distortion_coeffs1, R1, T1 = cv2.calibrateCamera([object_points], [image_points], (gray_image.shape[1], gray_image.shape[0]), camera_matrix, distortion_coeffs, flags=cv2.CALIB_USE_INTRINSIC_GUESS + cv2.CALIB_FIX_K3)
+    ret2, mtx2, distortion_coeffs2, R2, T2 = cv2.calibrateCamera([object_points], [image_points2], (gray_image.shape[1], gray_image.shape[0]), camera_matrix, distortion_coeffs, flags=cv2.CALIB_USE_INTRINSIC_GUESS + cv2.CALIB_FIX_K3)
+    print("Camera matrix 1:")
+    print(mtx1)
+    print("Camera matrix 2:")
+    print(mtx2)
+    print("\nDistortion coefficients:")
+    print(distortion_coeffs)
+
+    R1_t = cv2.Rodrigues(R1[0])[0]
+    T1_t = T1[0]
+    Rt_1 = np.concatenate([R1_t,T1_t], axis=-1) # [R|t]
+    P1 = np.matmul(mtx1,Rt_1) # A[R|t]
+
+    R2_t = cv2.Rodrigues(R2[0])[0]
+    T2_t = T2[0]
+    Rt_2 = np.concatenate([R2_t,T2_t], axis=-1) # [R|t]
+    P2 = np.matmul(mtx2,Rt_2) # A[R|t]
+    # Perform triangulation
+    points1 = np.array([x, y])
+    points2 = np.array([xp, yp])
+    points_3d_homogeneous = cv2.triangulatePoints(P1, P2, points1, points2)
+    print(f"3D homo -> {points_3d_homogeneous}")
+    def DLT(P1, P2, point1, point2):
+ 
+        A = [point1[1]*P1[2,:] - P1[1,:],
+            P1[0,:] - point1[0]*P1[2,:],
+            point2[1]*P2[2,:] - P2[1,:],
+            P2[0,:] - point2[0]*P2[2,:]
+            ]
+        A = np.array(A).reshape((4,4))
+        #print('A: ')
+        #print(A)
     
-    _, _, Vt = np.linalg.svd(A)
-    X = Vt[-1, :3] / Vt[-1, 3]
-
-    return X
-
-
-
-import numpy as np
-
-# def camera_calibration(image_points, world_points):
-#     A = np.zeros((len(image_points) * 2, 12))
-#     for i, (image, object) in enumerate(zip(image_points, world_points)):
-#         X, Y, Z = map(float, object) # Convert to float
-#         x, y = map(float, image)     # Convert to float
-#         A[2 * i, :] = [-X, -Y, -Z, -1, 0, 0, 0, 0, x * X, x * Y, x * Z, x]
-#         A[2 * i + 1, :] = [0, 0, 0, 0, -X, -Y, -Z, -1, y * X, y * Y, y * Z, y]
-
-#     # Perform SVD decomposition
-#     _, _, V = np.linalg.svd(A)
+        B = A.transpose() @ A
+        from scipy import linalg
+        U, s, Vh = linalg.svd(B, full_matrices = False)
     
-#     # Get the last row of V and reshape it into a 3x4 matrix to get the projection matrix P
-#     P = V[-1].reshape((3, 4))
+        print('Triangulated point: ')
+        print(Vh[3,0:3]/Vh[3,3])
+        return Vh[3,0:3]/Vh[3,3]
+    p3d = DLT(P1, P2, points1, points2)
+    print(f"DLT -> {p3d}")
+    # Convert homogeneous coordinates to 3D Cartesian coordinates
+    # points_3d_cartesian = cv2.convertPointsFromHomogeneous(points_3d_homogeneous.T)
+    # print(f"Points 3D Cartesian -> {points_3d_cartesian}")
+    # # Extract the 3D coordinates
+    # x_3d = points_3d_cartesian[0, 0, 0]
+    # y_3d = points_3d_cartesian[0, 0, 1]
+    # z_3d = points_3d_cartesian[0, 0, 2]
 
-#     # Compute the calibration error (reprojection error)
-#     projection_error = 0.0
-#     for i, (image, object) in enumerate(zip(image_points, world_points)):
-#         X_values = [float(point) for point in object]
-#         X_values.append(1)
-#         X = np.array(X_values, dtype=float) # Ensure consistent data type
-#         x = [float(point) for point in image]
-#         x.append(1)
-
-#         projected_x = np.dot(P, X)
-#         projected_x /= projected_x[-1]  # Normalizing
-#         projection_error += np.linalg.norm(projected_x[:-1] - x[:-1])
-
-#         mean_error = projection_error / len(image_points)
-#         print("Mean reprojection error: {}".format(mean_error))
-#         print(f"Projection Matrix: \n{P}")
-    
-#         return P
+    # print("3D Coordinates (X, Y, Z):")
+    # print(x_3d, y_3d, z_3d)
 
 
 
 
 def on_mouse_click(event, x, y, flags, param):
     if event == cv2.EVENT_LBUTTONDOWN:
-        F, img1, img2, M1, M2 = param
+        F, img1, img2, points1, points2 = param
         
         dst_point = find_best_match((x, y), F, img1, img2)
         cv2.drawMarker(img1, (x, y), (255, 255, 59), markerType=cv2.MARKER_CROSS, markerSize=10, thickness=2)
@@ -109,7 +161,7 @@ def on_mouse_click(event, x, y, flags, param):
         x1, y1 = map(int, [img2.shape[1], -(line[2] + line[0] * img2.shape[1]) / line[1]])
         cv2.line(img2, (x0, y0), (x1, y1), color, 1)
         print(f"The x` y` is -> {dst_point}")
-        print('3D Reconstruction: {}'.format(three_dimensional_reconstruction(M1, M2, (x, y), dst_point)))
+        print(caliCameraAnd3DRecon(x, y, dst_point[0], dst_point[1]))
         cv2.imshow('Image1', img1)
         cv2.imshow('Image2', img2)
 
@@ -128,31 +180,11 @@ matches = sorted(matches, key=lambda x: x.distance)
 points1 = np.float32([keypoints1[match.queryIdx].pt for match in matches]).reshape(-1, 1, 2)
 points2 = np.float32([keypoints2[match.trainIdx].pt for match in matches]).reshape(-1, 1, 2)
 
-with open('im1_points.txt', 'r') as f:
-    points_2d_L = f.readlines()
-
-with open('im2_points.txt', 'r') as f:
-    points_2D_R = f.readlines()
-
-with open('3DCoordinates.txt', 'r') as f:
-    points_3d = f.readlines()
-
-
-points_2d_L = [point.split() for point in points_2d_L]  # 2D image points
-points_2D_R = [point.split() for point in points_2D_R]  # 2D image points
-points_3d = [point.split() for point in points_3d]  # 3D world points
-
-# M1 = camera_calibration(points_2d_L, points_3d)
-# M2 = camera_calibration(points_2d_L, points_3d)
-ret, M1, dist, rvecs, tvecs = cv2.calibrateCamera(points_3d, points_2d_L, img1.shape[::-1], None, None)
-ret, M2, dist, rvecs, tvecs = cv2.calibrateCamera(points_3d, points_2D_R, img2.shape[::-1], None, None)
-
-
 F, mask = cv2.findFundamentalMat(points1, points2, cv2.FM_LMEDS)
 
 
 cv2.namedWindow('Image1')
-cv2.setMouseCallback('Image1', on_mouse_click, [F, img1, img2, M1, M2])
+cv2.setMouseCallback('Image1', on_mouse_click, [F, img1, img2, points1, points2])
 
 cv2.imshow('Image1', img1)
 cv2.imshow('Image2', img2)
